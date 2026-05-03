@@ -19,8 +19,9 @@ sili::ensure_tunnel() {
   esac
 
   local tunnel_name=${SILI_TUNNEL_NAME:-$codespace}
+  tunnel_name=$(sili::trim_tunnel_name "$tunnel_name")
 
-  sili::log "ensuring '$bin_name tunnel' is running in $codespace"
+  sili::log "ensuring '$bin_name tunnel' is running in $codespace (tunnel name: $tunnel_name)"
 
   # Heredoc is unquoted on the local side: $bin_name / $channel / $tunnel_name
   # are interpolated locally. Anything escaped with \$ is preserved literally
@@ -75,20 +76,96 @@ fi
 mkdir -p "\$HOME/.sili"
 log="\$HOME/.sili/tunnel.log"
 
+# Rotate previous log so the local watcher only sees output from this run.
+[ -f "\$log" ] && mv "\$log" "\${log}.prev"
+: > "\$log"
+
 nohup "\$cli_path" tunnel \\
   --accept-server-license-terms \\
   --name "\$tunnel_name" \\
   >> "\$log" 2>&1 &
 disown || true
 
-echo "[remote] started: \$cli_path tunnel --name \$tunnel_name"
+echo "[remote] launched: \$cli_path tunnel --name \$tunnel_name"
 echo "[remote] log: \$log"
 EOF
 )
 
-  if ! gh codespace ssh -c "$codespace" -- bash -s <<< "$remote_script"; then
+  # Capture launch output so we can detect the "already running" short-circuit
+  # without losing user-visible feedback.
+  local launch_out
+  launch_out=$(mktemp)
+  gh codespace ssh -c "$codespace" -- bash -s <<< "$remote_script" 2>&1 | tee "$launch_out"
+  local rc=${PIPESTATUS[0]}
+  if (( rc != 0 )); then
+    rm -f "$launch_out"
     sili::die "failed to start tunnel inside $codespace"
   fi
 
+  if grep -q '\[remote\] tunnel already running' "$launch_out"; then
+    rm -f "$launch_out"
+    sili::print_url "$quality" "$tunnel_name"
+    return 0
+  fi
+  rm -f "$launch_out"
+
+  # New launch: wait until the tunnel registers (and surface device-code
+  # auth if the user needs to grant access). Only print the URL once we've
+  # confirmed the tunnel is live.
+  if ! sili::wait_for_tunnel "$codespace"; then
+    return 1
+  fi
+
   sili::print_url "$quality" "$tunnel_name"
+}
+
+# Poll the remote tunnel log until either:
+#   (a) we see the "Open this link..." line containing vscode.dev/tunnel/...
+#       — the tunnel is live, return 0.
+#   (b) timeout elapses — return 1.
+# Along the way, surface any device-code prompt so the user can authorize.
+sili::wait_for_tunnel() {
+  local codespace=$1
+  local timeout=${SILI_TUNNEL_TIMEOUT:-300}
+  local interval=2
+
+  sili::log "waiting for tunnel to register (timeout: ${timeout}s)"
+
+  local saw_device=0 elapsed=0 log_content
+  while (( elapsed < timeout )); do
+    log_content=$(gh codespace ssh -c "$codespace" \
+      -- 'cat ~/.sili/tunnel.log 2>/dev/null' 2>/dev/null) || log_content=""
+
+    if (( saw_device == 0 )); then
+      local device_line url code
+      device_line=$(printf '%s\n' "$log_content" \
+        | grep -E 'github\.com/login/device' | tail -1 || true)
+      if [[ -n $device_line ]]; then
+        saw_device=1
+        url=$(printf '%s' "$device_line" \
+          | grep -oE 'https://github\.com/login/device' | head -1)
+        code=$(printf '%s' "$device_line" \
+          | grep -oE '[A-Z0-9]{4}-[A-Z0-9]{4}' | head -1)
+        sili::warn "first-run authentication required:"
+        if [[ -n $url && -n $code ]]; then
+          printf '\n  Open: %s\n  Code: %s\n\n' "$url" "$code" >&2
+        else
+          printf '\n  %s\n\n' "$device_line" >&2
+        fi
+      fi
+    fi
+
+    if printf '%s\n' "$log_content" \
+        | grep -qE 'https://[a-z.]*vscode\.dev/tunnel/'; then
+      sili::log "tunnel registered"
+      return 0
+    fi
+
+    sleep "$interval"
+    elapsed=$(( elapsed + interval ))
+  done
+
+  sili::warn "tunnel did not register within ${timeout}s"
+  sili::warn "inspect the log: gh codespace ssh -c $codespace -- 'tail -f ~/.sili/tunnel.log'"
+  return 1
 }
