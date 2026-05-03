@@ -10,13 +10,21 @@ sili::cmd_create() {
 
   sili::log "creating codespace${args[*]:+ (}${args[*]}${args[*]:+)}"
 
-  # `gh codespace create` prints the new codespace name on stdout.
-  local name
-  if ! name=$(gh codespace create "${args[@]}"); then
+  # Snapshot existing codespaces before invoking gh. We *cannot* use command
+  # substitution to capture gh's stdout — that would close the TTY and gh
+  # bails with "error getting machine: no terminal" instead of using its
+  # default picker. Run gh attached to the terminal, then diff list output
+  # to find the new codespace.
+  local before after name
+  before=$(gh codespace list --json name --jq '.[].name' 2>/dev/null | sort)
+
+  if ! gh codespace create "${args[@]}"; then
     sili::die "gh codespace create failed"
   fi
-  name=$(printf '%s' "$name" | tail -n1 | tr -d '[:space:]')
-  [[ -z $name ]] && sili::die "could not parse codespace name from gh output"
+
+  after=$(gh codespace list --json name --jq '.[].name' 2>/dev/null | sort)
+  name=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -n1)
+  [[ -z $name ]] && sili::die "could not determine new codespace name from gh codespace list"
 
   sili::log "created: $name"
 
