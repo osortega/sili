@@ -71,3 +71,7 @@ gh codespace ssh -c <name> -- tail -f ~/.sili/tunnel.log
 ```
 
 After you authorize it, `sili start` is silent on subsequent runs.
+
+## License
+
+[MIT](LICENSE)
