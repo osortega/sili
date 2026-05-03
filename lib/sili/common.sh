@@ -55,6 +55,29 @@ sili::quality_bin() {
   esac
 }
 
+# VS Code tunnel names must be ≤20 chars and match [a-z0-9][a-z0-9-]*.
+# Codespace names regularly exceed 20 chars (e.g.,
+# `fantastic-waddle-rpx7v759jxp25vq`), so squeeze them: keep the readable
+# prefix and append a 7-char hash of the full name to preserve uniqueness.
+sili::trim_tunnel_name() {
+  local name=$1
+  if (( ${#name} <= 20 )); then
+    printf '%s' "$name"
+    return
+  fi
+  local prefix=${name:0:12}
+  prefix=${prefix%-}
+  local hash
+  if command -v shasum >/dev/null 2>&1; then
+    hash=$(printf '%s' "$name" | shasum -a 256 | cut -c1-7)
+  elif command -v sha256sum >/dev/null 2>&1; then
+    hash=$(printf '%s' "$name" | sha256sum | cut -c1-7)
+  else
+    hash=$(printf '%s' "$name" | cksum | awk '{printf "%07x", $1}')
+  fi
+  printf '%s-%s' "$prefix" "$hash"
+}
+
 sili::tunnel_url() {
   local quality=$1 name=$2
   case $quality in
