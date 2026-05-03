@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# sili — codespace resource manager with auto-tunnel.
+
+set -euo pipefail
+
+# Resolve our own location so we can source lib/sili/*.sh regardless of how
+# the user invoked us (direct path, symlink in $PATH, etc.).
+self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || python3 -c \
+  'import os,sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")
+root=$(cd "$(dirname "$self")/.." && pwd)
+lib="$root/lib/sili"
+
+# shellcheck source=../lib/sili/common.sh
+source "$lib/common.sh"
+# shellcheck source=../lib/sili/ensure_tunnel.sh
+source "$lib/ensure_tunnel.sh"
+# shellcheck source=../lib/sili/cmd_create.sh
+source "$lib/cmd_create.sh"
+# shellcheck source=../lib/sili/cmd_start.sh
+source "$lib/cmd_start.sh"
+# shellcheck source=../lib/sili/cmd_list.sh
+source "$lib/cmd_list.sh"
+# shellcheck source=../lib/sili/cmd_stop.sh
+source "$lib/cmd_stop.sh"
+# shellcheck source=../lib/sili/cmd_delete.sh
+source "$lib/cmd_delete.sh"
+
+sili::usage() {
+  cat <<'EOF'
+sili — manage GitHub Codespaces with automatic VS Code tunnels.
+
+usage:
+  sili create [-r OWNER/REPO] [-b BRANCH] [-m MACHINE] [-l LOCATION] [--stable]
+                                  create a new codespace + start tunnel
+  sili start  [NAME] [--stable]   wake an existing codespace + start tunnel
+                                  (interactive picker if NAME omitted)
+  sili list                       list your codespaces
+  sili stop   [NAME]              stop a codespace
+  sili delete [NAME]              delete a codespace
+  sili help                       show this message
+
+tunnel quality:
+  Defaults to `code-insiders tunnel`. Pass --stable (or set
+  SILI_QUALITY=stable) to use `code tunnel` instead.
+
+After `create` or `start`, sili prints a tunnel URL such as
+  https://insiders.vscode.dev/tunnel/<name>
+Open it in your browser, or attach from desktop VS Code via the
+Remote — Tunnels extension. sili itself does not attach.
+EOF
+}
+
+main() {
+  local cmd=${1:-help}
+  shift || true
+
+  case $cmd in
+    -h|--help|help) sili::usage ;;
+    create)         sili::check_deps; sili::cmd_create "$@" ;;
+    start)          sili::check_deps; sili::cmd_start  "$@" ;;
+    list|ls)        sili::check_deps; sili::cmd_list   "$@" ;;
+    stop)           sili::check_deps; sili::cmd_stop   "$@" ;;
+    delete|rm)      sili::check_deps; sili::cmd_delete "$@" ;;
+    *)              sili::usage; exit 64 ;;
+  esac
+}
+
+main "$@"
