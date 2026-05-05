@@ -18,7 +18,19 @@ sili::ensure_tunnel() {
     *)        sili::die "unknown quality: $quality" ;;
   esac
 
-  local tunnel_name=${SILI_TUNNEL_NAME:-$codespace}
+  # Prefer the codespace's displayName as the tunnel name — that's what
+  # `sili create` sets to the repo name. Fall back to the codespace's
+  # underlying random name if no displayName is set. SILI_TUNNEL_NAME
+  # overrides everything.
+  local tunnel_name
+  if [[ -n ${SILI_TUNNEL_NAME:-} ]]; then
+    tunnel_name=$SILI_TUNNEL_NAME
+  else
+    local display
+    display=$(gh codespace list --json name,displayName \
+      --jq ".[] | select(.name == \"$codespace\") | .displayName" 2>/dev/null) || display=""
+    tunnel_name=${display:-$codespace}
+  fi
   tunnel_name=$(sili::trim_tunnel_name "$tunnel_name")
 
   sili::log "ensuring '$bin_name tunnel' is running in $codespace (tunnel name: $tunnel_name)"

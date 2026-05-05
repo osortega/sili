@@ -56,11 +56,16 @@ sili::quality_bin() {
 }
 
 # VS Code tunnel names must be ≤20 chars and match [a-z0-9][a-z0-9-]*.
-# Codespace names regularly exceed 20 chars (e.g.,
-# `fantastic-waddle-rpx7v759jxp25vq`), so squeeze them: keep the readable
-# prefix and append a 7-char hash of the full name to preserve uniqueness.
+# Sanitize (lowercase, replace invalid chars), then squeeze if too long by
+# keeping a 12-char prefix and appending a 7-char hash for uniqueness.
 sili::trim_tunnel_name() {
   local name=$1
+  name=$(printf '%s' "$name" \
+    | tr 'A-Z' 'a-z' \
+    | tr -c 'a-z0-9-' '-' \
+    | tr -s '-' \
+    | sed 's/^-*//; s/-*$//')
+  [[ -z $name ]] && name=tunnel
   if (( ${#name} <= 20 )); then
     printf '%s' "$name"
     return
@@ -76,6 +81,27 @@ sili::trim_tunnel_name() {
     hash=$(printf '%s' "$name" | cksum | awk '{printf "%07x", $1}')
   fi
   printf '%s-%s' "$prefix" "$hash"
+}
+
+# Pick the next available display name in a "<base>", "<base>-1", "<base>-2"…
+# series, comparing against the displayNames already used by the user's
+# codespaces.
+sili::next_unique_display_name() {
+  local base=$1
+  local existing
+  existing=$(gh codespace list --json displayName --jq '.[].displayName' 2>/dev/null) \
+    || existing=""
+
+  if ! grep -Fxq -- "$base" <<<"$existing"; then
+    printf '%s' "$base"
+    return
+  fi
+
+  local n=1
+  while grep -Fxq -- "${base}-${n}" <<<"$existing"; do
+    n=$((n + 1))
+  done
+  printf '%s-%d' "$base" "$n"
 }
 
 sili::tunnel_url() {

@@ -8,6 +8,41 @@ sili::cmd_create() {
   local args=()
   while IFS= read -r a; do args+=("$a"); done < <(sili::strip_stable "$@")
 
+  # Look for -R/-r/--repo and -d/--display-name in the forwarded args. If a
+  # repo is supplied and the user didn't pick a display name themselves,
+  # default the display name to the repo's basename — collision-suffixed
+  # against existing codespaces (foo, foo-1, foo-2, ...). The display name
+  # also drives the tunnel name (see ensure_tunnel.sh) so the URL ends up
+  # like https://insiders.vscode.dev/tunnel/<repo>.
+  local repo="" has_display=0
+  local i=0
+  while (( i < ${#args[@]} )); do
+    case "${args[i]}" in
+      -R|-r|--repo)
+        (( i + 1 < ${#args[@]} )) && repo="${args[i+1]}"
+        i=$((i + 2)) ;;
+      --repo=*)
+        repo="${args[i]#*=}"
+        i=$((i + 1)) ;;
+      -d|--display-name)
+        has_display=1
+        i=$((i + 2)) ;;
+      --display-name=*)
+        has_display=1
+        i=$((i + 1)) ;;
+      *)
+        i=$((i + 1)) ;;
+    esac
+  done
+
+  if (( has_display == 0 )) && [[ -n $repo ]]; then
+    local repo_base=${repo##*/}
+    local display
+    display=$(sili::next_unique_display_name "$repo_base")
+    args+=(--display-name "$display")
+    sili::log "display name: $display"
+  fi
+
   sili::log "creating codespace${args[*]:+ (}${args[*]}${args[*]:+)}"
 
   # Snapshot existing codespaces before invoking gh. We *cannot* use command
